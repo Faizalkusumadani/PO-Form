@@ -92,7 +92,7 @@ const formSchema = z.object({
     (qty) => Object.values(qty).some((v) => Number(v) > 0),
     { message: "Isi minimal 1 qty order" },
   ), // G-O
-  maxKirimJam: z.string().min(1, { message: "Jam maksimal kirim wajib diisi" }), // P
+  maxKirimJam: z.string().optional(), // P (optional)
   alamatKirim: z
     .string()
     .min(8, { message: "Alamat kirim minimal 8 karakter" }), // Q
@@ -150,7 +150,7 @@ export default function FormPOHarian() {
         params.append(paramKey, String(data.qtyOrder[key] ?? 0));
       });
 
-      params.append("max_kirim_jam", data.maxKirimJam);
+      params.append("max_kirim_jam", data.maxKirimJam ?? "");
       params.append("alamat_kirim", data.alamatKirim);
       params.append("penerima", data.penerima);
       params.append("no_penerima", data.noPenerima);
@@ -321,7 +321,7 @@ export default function FormPOHarian() {
           <h2 className={sectionTitleClass}>Detail Pengiriman</h2>
           <div>
             <label className="block text-sm text-smp-muted mb-1">
-              Max Kirim Jam*
+              Max Kirim Jam (Optional)
             </label>
             <input
               type="time"
