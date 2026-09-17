@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -38,6 +38,13 @@ const HARI_OPTIONS = [
   "Minggu",
 ] as const;
 
+// Format nomor telepon jadi grup 4 digit dipisah strip, mis. "1234-1234-123"
+// untuk 10 digit atau "1234-1234-1234" untuk 12 digit.
+function formatNoPenerima(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 16);
+  return digits.match(/.{1,4}/g)?.join("-") ?? digits;
+}
+
 function buildQtyShape<K extends string>(keys: readonly K[]) {
   return keys.reduce(
     (acc, key) => {
@@ -69,15 +76,6 @@ const qtyBonusSchema = z.object(buildQtyShape(bonusKeys));
 
 const emptyQtyOrder = buildEmptyQty(orderKeys);
 const emptyQtyBonus = buildEmptyQty(bonusKeys);
-
-// ============================================================
-// SCHEMA FORM — selaras dengan kolom sheet PO PW CUSTOMER
-// A: NO (otomatis) | B: NAMA SALES | C: JADWAL KIRIM (HARI) |
-// D: TANGGAL KIRIM | E: KODE PELANGGAN | F: NAMA PELANGGAN |
-// G-O: QTY ORDER | P: MAX KIRIM JAM | Q: ALAMAT KIRIM |
-// R: PENERIMA | S: NO. PENERIMA | T-AA: QTY BONUS
-// (AB: STATUS KIRIM — diisi belakangan oleh admin, tidak lewat form)
-// ============================================================
 const formSchema = z.object({
   namaSales: z.string().min(3, { message: "Nama sales minimal 3 karakter" }), // B
   jadwalKirimHari: z.enum(HARI_OPTIONS, {
@@ -97,13 +95,54 @@ const formSchema = z.object({
     .string()
     .min(8, { message: "Alamat kirim minimal 8 karakter" }), // Q
   penerima: z.string().min(3, { message: "Nama penerima minimal 3 karakter" }), // R
-  noPenerima: z
-    .string()
-    .min(10, { message: "Nomor penerima minimal 10 digit" }), // S
+  noPenerima: z.string().refine(
+    (val) => {
+      const digits = val.replace(/\D/g, "");
+      return (
+        digits.length >= 10 &&
+        digits.length <= 16 &&
+        formatNoPenerima(val) === val
+      );
+    },
+    { message: "Nomor penerima harus 10-16 digit, format 1234-1234-123" },
+  ), // S
   qtyBonus: qtyBonusSchema, // T-AA, boleh semua 0
+  catatan: z.string().optional(), // Catatan/deskripsi tambahan (optional)
 });
 
 type FormValues = z.infer<typeof formSchema>;
+
+// ============================================================
+// Komponen presentasional kecil (murni tampilan, tidak menyentuh logika)
+// ============================================================
+function SectionCard({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="bg-white">
+      <div className="mb-6 flex items-start gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">{title}</h2>
+          {description && (
+            <p className="mt-0.5 text-sm text-gray-500">{description}</p>
+          )}
+        </div>
+      </div>
+      <div className="space-y-6">{children}</div>
+    </section>
+  );
+}
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null;
+  return <p className="mt-1.5 text-xs text-alert">{message}</p>;
+}
 
 export default function FormPOHarian() {
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
@@ -132,6 +171,7 @@ export default function FormPOHarian() {
       penerima: "",
       noPenerima: "",
       qtyBonus: emptyQtyBonus,
+      catatan: "",
     },
   });
 
@@ -160,6 +200,8 @@ export default function FormPOHarian() {
         params.append(`bonus_${key.slice(1)}`, String(data.qtyBonus[key] ?? 0));
       });
 
+      params.append("catatan", data.catatan ?? "");
+
       // "NO" tidak perlu dikirim — otomatis dihitung oleh script (baris terakhir)
       // "STATUS KIRIM" tidak diisi lewat form — diisi manual di sheet oleh admin
 
@@ -180,262 +222,236 @@ export default function FormPOHarian() {
   };
 
   const inputClass =
-    "w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none transition-colors focus:border-utama focus:ring-2 focus:ring-utama/20";
+    "w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 hover:border-gray-300 focus:border-utama focus:ring-4 focus:ring-utama/10";
 
   const qtyInputClass =
-    "w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm text-center text-gray-900 outline-none transition-colors focus:border-utama focus:ring-2 focus:ring-utama/20";
+    "w-full rounded-lg border border-gray-200 bg-white px-2 py-2 text-center text-sm text-gray-900 outline-none transition-colors hover:border-gray-300 focus:border-utama focus:ring-4 focus:ring-utama/10";
 
-  const sectionTitleClass =
-    "text-sm font-semibold text-gray-900 border-b border-gray-200 pb-2";
+  const labelClass = "mb-1.5 block text-sm font-medium text-gray-700";
+
+  const qtyLabelClass = "mb-1 block text-xs font-medium text-gray-500";
+
+  const { onChange: onNoPenerimaChange, ...noPenerimaRegister } =
+    register("noPenerima");
 
   return (
     <>
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-10">
-        {/* Sales & Jadwal */}
-        <div className="space-y-4">
-          <h2 className={sectionTitleClass}>Sales &amp; Jadwal Kirim</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                Nama Sales*
-              </label>
-              <input
-                type="text"
-                {...register("namaSales")}
-                className={inputClass}
-              />
-              {errors.namaSales && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.namaSales.message}
-                </p>
-              )}
-            </div>
+      <div className="mx-auto w-full max-w-5xl">
+        <form
+          onSubmit={handleSubmit(onSubmit)}
+          noValidate
+          className="space-y-6"
+        >
+          {/* Sales & Jadwal */}
+          <SectionCard title="Sales & Jadwal Kirim">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+              <div>
+                <label className={labelClass}>Nama Sales*</label>
+                <input
+                  type="text"
+                  {...register("namaSales")}
+                  className={inputClass}
+                />
+                <FieldError message={errors.namaSales?.message} />
+              </div>
 
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                Jadwal Kirim (Hari)*
-              </label>
-              <select
-                {...register("jadwalKirimHari")}
-                defaultValue=""
-                className={inputClass}
-              >
-                <option value="" disabled>
-                  Pilih hari
-                </option>
-                {HARI_OPTIONS.map((hari) => (
-                  <option key={hari} value={hari}>
-                    {hari}
+              <div>
+                <label className={labelClass}>Jadwal Kirim (Hari)*</label>
+                <select
+                  {...register("jadwalKirimHari")}
+                  defaultValue=""
+                  className={inputClass}
+                >
+                  <option value="" disabled>
+                    Pilih hari
                   </option>
-                ))}
-              </select>
-              {errors.jadwalKirimHari && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.jadwalKirimHari.message}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                Tanggal Kirim*
-              </label>
-              <input
-                type="date"
-                {...register("tanggalKirim")}
-                className={inputClass}
-              />
-              {errors.tanggalKirim && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.tanggalKirim.message}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Pelanggan */}
-        <div className="space-y-4">
-          <h2 className={sectionTitleClass}>Data Pelanggan</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                Kode Pelanggan*
-              </label>
-              <input
-                type="text"
-                {...register("kodePelanggan")}
-                className={inputClass}
-              />
-              {errors.kodePelanggan && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.kodePelanggan.message}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                Nama Pelanggan*
-              </label>
-              <input
-                type="text"
-                {...register("namaPelanggan")}
-                className={inputClass}
-              />
-              {errors.namaPelanggan && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.namaPelanggan.message}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* QTY ORDER */}
-        <div className="space-y-4">
-          <h2 className={sectionTitleClass}>Qty Order</h2>
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-            {ORDER_SIZES.map(({ key, label }) => (
-              <div key={key}>
-                <label className="block text-xs text-smp-muted mb-1">
-                  {label}
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  {...register(`qtyOrder.${key}` as const)}
-                  className={qtyInputClass}
-                />
+                  {HARI_OPTIONS.map((hari) => (
+                    <option key={hari} value={hari}>
+                      {hari}
+                    </option>
+                  ))}
+                </select>
+                <FieldError message={errors.jadwalKirimHari?.message} />
               </div>
-            ))}
-          </div>
-          {errors.qtyOrder?.message && (
-            <p className="mt-2 text-xs text-alert">{errors.qtyOrder.message}</p>
-          )}
-        </div>
 
-        {/* Info kirim lanjutan */}
-        <div className="space-y-4">
-          <h2 className={sectionTitleClass}>Detail Pengiriman</h2>
-          <div>
-            <label className="block text-sm text-smp-muted mb-1">
-              Max Kirim Jam (Optional)
-            </label>
-            <input
-              type="time"
-              {...register("maxKirimJam")}
-              className={`${inputClass} md:w-1/3`}
-            />
-            {errors.maxKirimJam && (
-              <p className="mt-1 text-xs text-alert">
-                {errors.maxKirimJam.message}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm text-smp-muted mb-1">
-              Alamat Kirim*
-            </label>
-            <textarea
-              rows={3}
-              {...register("alamatKirim")}
-              className="w-full rounded-lg border border-gray-300 bg-white resize-none px-3 py-2.5 text-sm text-gray-900 outline-none transition-colors focus:border-utama focus:ring-2 focus:ring-utama/20"
-            />
-            {errors.alamatKirim && (
-              <p className="mt-1 text-xs text-alert">
-                {errors.alamatKirim.message}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Info Penerima */}
-        <div className="space-y-4">
-          <h2 className={sectionTitleClass}>Informasi Penerima</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                Penerima*
-              </label>
-              <input
-                type="text"
-                {...register("penerima")}
-                className={inputClass}
-              />
-              {errors.penerima && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.penerima.message}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm text-smp-muted mb-1">
-                No. Penerima* (Ex. +62812 7777 1111)
-              </label>
-              <input
-                type="tel"
-                {...register("noPenerima")}
-                className={inputClass}
-              />
-              {errors.noPenerima && (
-                <p className="mt-1 text-xs text-alert">
-                  {errors.noPenerima.message}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* QTY BONUS */}
-        <div className="space-y-4">
-          <h2 className={sectionTitleClass}>Qty Bonus (opsional)</h2>
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-            {BONUS_SIZES.map(({ key, label }) => (
-              <div key={key}>
-                <label className="block text-xs text-smp-muted mb-1">
-                  {label}
-                </label>
+              <div>
+                <label className={labelClass}>Tanggal Kirim*</label>
                 <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  {...register(`qtyBonus.${key}` as const)}
-                  className={qtyInputClass}
+                  type="date"
+                  {...register("tanggalKirim")}
+                  className={inputClass}
                 />
+                <FieldError message={errors.tanggalKirim?.message} />
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
+          </SectionCard>
 
-        {/* Submit Button */}
-        <div className="flex items-center justify-end gap-3 border-t border-gray-200 pt-8">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex items-center gap-2 rounded-full bg-utama px-8 py-3 text-base font-medium text-white shadow-sm transition hover:bg-blue-400 hover:shadow disabled:opacity-50"
+          {/* Pelanggan */}
+          <SectionCard title="Data Pelanggan">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div>
+                <label className={labelClass}>Kode Pelanggan*</label>
+                <input
+                  type="text"
+                  {...register("kodePelanggan")}
+                  className={inputClass}
+                />
+                <FieldError message={errors.kodePelanggan?.message} />
+              </div>
+
+              <div>
+                <label className={labelClass}>Nama Pelanggan*</label>
+                <input
+                  type="text"
+                  {...register("namaPelanggan")}
+                  className={inputClass}
+                />
+                <FieldError message={errors.namaPelanggan?.message} />
+              </div>
+            </div>
+          </SectionCard>
+
+          {/* QTY ORDER */}
+          <SectionCard
+            title="Qty Order"
+            description="Isi minimal 1 ukuran produk yang dipesan."
           >
-            {isSubmitting ? (
-              <>
-                <span className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                Mengirim...
-              </>
-            ) : (
-              "Kirim PO"
-            )}
-          </button>
-        </div>
-      </form>
+            <div>
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
+                {ORDER_SIZES.map(({ key, label }) => (
+                  <div key={key}>
+                    <label className={qtyLabelClass}>{label}</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      {...register(`qtyOrder.${key}` as const)}
+                      className={qtyInputClass}
+                    />
+                  </div>
+                ))}
+              </div>
+              <FieldError
+                message={errors.qtyOrder?.message as string | undefined}
+              />
+            </div>
+          </SectionCard>
+
+          {/* Info kirim lanjutan */}
+          <SectionCard title="Detail Pengiriman">
+            <div>
+              <label className={labelClass}>Max Kirim Jam (Opsional)</label>
+              <input
+                type="time"
+                {...register("maxKirimJam")}
+                className={`${inputClass} sm:w-48`}
+              />
+              <FieldError message={errors.maxKirimJam?.message} />
+            </div>
+
+            <div>
+              <label className={labelClass}>Alamat Kirim*</label>
+              <textarea
+                rows={3}
+                {...register("alamatKirim")}
+                className={`${inputClass} resize-none`}
+              />
+              <FieldError message={errors.alamatKirim?.message} />
+            </div>
+          </SectionCard>
+
+          {/* Info Penerima */}
+          <SectionCard title="Informasi Penerima">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div>
+                <label className={labelClass}>Penerima*</label>
+                <input
+                  type="text"
+                  {...register("penerima")}
+                  className={inputClass}
+                />
+                <FieldError message={errors.penerima?.message} />
+              </div>
+
+              <div>
+                <label className={labelClass}>
+                  No. Penerima* (10-16 digit, cth. 0812-1234-123)
+                </label>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={19}
+                  placeholder="0812-1234-123"
+                  {...noPenerimaRegister}
+                  onChange={(e) => {
+                    e.target.value = formatNoPenerima(e.target.value);
+                    onNoPenerimaChange(e);
+                  }}
+                  className={inputClass}
+                />
+                <FieldError message={errors.noPenerima?.message} />
+              </div>
+            </div>
+          </SectionCard>
+
+          {/* QTY BONUS */}
+          <SectionCard
+            title="Qty Bonus"
+            description="Silakan isi jika tersedia bonus"
+          >
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+              {BONUS_SIZES.map(({ key, label }) => (
+                <div key={key}>
+                  <label className={qtyLabelClass}>{label}</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    {...register(`qtyBonus.${key}` as const)}
+                    className={qtyInputClass}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <label className={labelClass}>Catatan (Opsional)</label>
+              <textarea
+                rows={3}
+                placeholder="Tambahkan catatan atau deskripsi tambahan jika diperlukan..."
+                {...register("catatan")}
+                className={`${inputClass} resize-none`}
+              />
+              <FieldError message={errors.catatan?.message} />
+            </div>
+          </SectionCard>
+
+          {/* Submit Button */}
+          <div className="flex items-center justify-end pt-2">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-utama px-8 py-3 text-base font-medium text-white shadow-sm transition hover:bg-blue-400 hover:shadow disabled:opacity-50 sm:w-auto"
+            >
+              {isSubmitting ? (
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  Mengirim...
+                </>
+              ) : (
+                "Kirim PO"
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
 
       {/* Success Dialog */}
       {showSuccessDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-gray-100 bg-white p-7 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-gray-100 bg-white p-8 shadow-xl">
             <div className="flex justify-center mb-4">
-              <div className="rounded-full bg-green-100 p-3">
+              <div className="rounded-full bg-green-100 p-4">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
@@ -455,13 +471,13 @@ export default function FormPOHarian() {
             <h2 className="text-center text-lg font-semibold text-gray-900">
               PO berhasil dikirim
             </h2>
-            <p className="text-center text-sm text-smp-muted pt-1.5">
+            <p className="text-center text-sm text-gray-500 pt-1.5">
               Terima kasih. Data sudah masuk ke sheet PO PW CUSTOMER.
             </p>
-            <div className="flex justify-center pt-5">
+            <div className="flex justify-center pt-6">
               <button
                 onClick={() => setShowSuccessDialog(false)}
-                className="rounded-full border border-gray-300 px-8 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                className="rounded-full border border-gray-200 px-8 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
               >
                 Tutup
               </button>
@@ -472,10 +488,10 @@ export default function FormPOHarian() {
 
       {/* Error Dialog */}
       {showErrorDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-gray-100 bg-white p-7 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl border border-gray-100 bg-white p-8 shadow-xl">
             <div className="flex justify-center mb-4">
-              <div className="rounded-full bg-red-100 p-3">
+              <div className="rounded-full bg-red-100 p-4">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
@@ -495,13 +511,13 @@ export default function FormPOHarian() {
             <h2 className="text-center text-lg font-semibold text-gray-900">
               Terjadi kesalahan
             </h2>
-            <p className="text-center text-sm text-smp-muted pt-1.5">
+            <p className="text-center text-sm text-gray-500 pt-1.5">
               PO gagal terkirim. Silakan coba lagi.
             </p>
-            <div className="flex justify-center pt-5">
+            <div className="flex justify-center pt-6">
               <button
                 onClick={() => setShowErrorDialog(false)}
-                className="rounded-full border border-gray-300 px-8 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                className="rounded-full border border-gray-200 px-8 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
               >
                 Tutup
               </button>

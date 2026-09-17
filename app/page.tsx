@@ -11,7 +11,7 @@ export default function FormPage() {
               PO Harian
             </h2>
             <p className="mt-1 text-sm text-smp-muted">
-              Formulir pemesanan pengiriman harian
+              Form pemesanan pengiriman harian
             </p>
           </div>
           <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-smp-muted">
